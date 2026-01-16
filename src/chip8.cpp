@@ -1,12 +1,15 @@
 #include "chip8.h"
 
+#include <SDL3/SDL_oldnames.h>
 #include <iostream>
 #include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string>
 
-Chip8::Chip8() : rng(std::random_device{}()), dist(0, 255) {}
+Chip8::Chip8() : rng(std::random_device{}()), dist(0, 255) {
+  load_font_set();
+}
 void Chip8::load_font_set() {
   const uint8_t font_set[FONT_SIZE] = {
       0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -27,7 +30,7 @@ void Chip8::load_font_set() {
       0xF0, 0x80, 0xF0, 0x80, 0x80  // F
   };
 
-  for (int i = 0; i < FONT_SIZE; ++i) {
+  for (size_t i = 0; i < FONT_SIZE; ++i) {
     memory[i] = font_set[i]; // store in interpreter area (0x000 - 0x1FF)
   }
 }
@@ -67,12 +70,13 @@ void Chip8::fetch_opcode() {
 }
 
 void Chip8::decode_and_execute() {
-  const auto first_nibble = (opcode >> 12) & 0xF;
-  const auto x = (opcode >> 8) & 0xF;
-  const auto y = (opcode >> 4) & 0xF;
-  const auto n = opcode & 0xF;
-  const auto kk = opcode & 0xFF;
-  const auto nnn = opcode & 0xFFF;
+  const uint8_t first_nibble = static_cast<uint8_t>((opcode >> 12) & 0xF);
+  const uint8_t x = static_cast<uint8_t>((opcode >> 8) & 0xF);
+  const uint8_t y = static_cast<uint8_t>((opcode >> 4) & 0xF);
+  const uint8_t n = static_cast<uint8_t>(opcode & 0xF);
+  const uint8_t kk = static_cast<uint8_t>(opcode & 0xFF);
+  const uint16_t nnn = opcode & 0xFFF;
+
   switch (first_nibble) {
   case 0x0:
     execute_0x0(opcode);
@@ -82,7 +86,7 @@ void Chip8::decode_and_execute() {
     program_counter = nnn;
     break;
 
-  case 0x2:
+  case 0x2: // call subroutine at nnn
     execute_0x2(nnn);
     break;
 
@@ -109,7 +113,7 @@ void Chip8::decode_and_execute() {
     break;
 
   case 0x7:
-    registers[x] = (registers[x] + kk) & 0xFF;
+    registers[x] += kk;
     break;
 
   case 0x8:
@@ -131,11 +135,11 @@ void Chip8::decode_and_execute() {
     break;
 
   case 0xC: {
-    auto random = dist(rng);
+    uint8_t random = dist(rng);
     registers[x] = random & kk;
     break;
   }
- 
+
   case 0xD:
     execute_0xD(x, y, n);
     break;
@@ -172,9 +176,9 @@ void Chip8::execute_0x2(uint16_t nnn) {
 }
 
 void Chip8::execute_0xD(uint8_t x, uint8_t y, uint8_t n) {
-  const auto x_pos = registers[x] % width;
-  const auto y_pos = registers[y] % height;
-  const auto height_n = n; // the low nibble (how many rows tall the sprite is)
+  const uint8_t x_pos = registers[x] % WIDTH;
+  const uint8_t y_pos = registers[y] % HEIGHT;
+  const uint8_t height_n = n; // low nibble (how many rows tall the sprite is)
 
   registers[0xF] = 0; // assume no collision
 
@@ -183,14 +187,14 @@ void Chip8::execute_0xD(uint8_t x, uint8_t y, uint8_t n) {
 
     for (uint8_t bit = 0; bit < 8; ++bit) {
       if (sprite & (0x80 >> bit)) { // check if pixel is set in sprite
-        const auto px = (x_pos + bit) % width; // updated x/y positions for sprite bit, where width and height considers screen wrap
-        const auto py = (y_pos + row) % height; 
-        const auto pixel_index = py * width + px;
+        const uint8_t px = (x_pos + bit) % WIDTH; // updated x/y positions for sprite bit, where WIDTH and HEIGHT considers screen wrap
+        const uint8_t py = (y_pos + row) % HEIGHT;
+        const std::size_t pixel_index = static_cast<std::size_t>(py) * WIDTH + px;
 
         if (gfx[pixel_index] == 1) {
-          registers[0xF] = 1; //collision found
+          registers[0xF] = 1; // collision found
         }
-        gfx[pixel_index] ^= 1; //xor to display
+        gfx[pixel_index] ^= 1; // xor to display
       }
     }
   }
@@ -228,7 +232,7 @@ void Chip8::execute_0x8(uint8_t x, uint8_t y, uint8_t n) {
   case 0x4: {
     uint16_t sum = registers[x] + registers[y];
     registers[0xF] = (sum > 0xFF) ? 1 : 0;
-    registers[x] = sum & 0xFF;
+    registers[x] = static_cast<uint8_t>(sum);
     break;
   }
   case 0x5:
@@ -259,9 +263,9 @@ void Chip8::execute_0xF(uint8_t x, uint8_t kk) {
     break;
   case 0x0A: {
     bool key_pressed = false;
-    for (int i = 0; i < 16; ++i) {
+    for (std::size_t i = 0; i < key_states.size(); ++i) {
       if (key_states[i]) {
-        registers[x] = i;
+        registers[x] = static_cast<uint8_t>(i);
         key_pressed = true;
         break;
       }
@@ -291,12 +295,12 @@ void Chip8::execute_0xF(uint8_t x, uint8_t kk) {
     break;
   }
   case 0x55:
-    for (int i = 0; i <= x; ++i) {
+    for (std::size_t i = 0; i <= static_cast<std::size_t>(x); ++i) {
       memory[index_register + i] = registers[i];
     }
     break;
   case 0x65:
-    for (int i = 0; i <= x; ++i) {
+    for (std::size_t i = 0; i <= static_cast<std::size_t>(x); ++i) {
       registers[i] = memory[index_register + i];
     }
     break;
@@ -320,3 +324,48 @@ void Chip8::update_timers() {
   }
 }
 
+void Chip8::set_key_down(const int key){
+	if (key >= 0 && key < 16){
+		key_states[static_cast<std::size_t>(key)] = true;
+	}
+}
+
+void Chip8::set_key_up(const int key){
+	if (key >= 0 && key < 16){
+		key_states[static_cast<std::size_t>(key)] = false;
+	}
+}
+
+int Chip8::get_key(SDL_Scancode scancode){
+	struct KeyMapping{
+		SDL_Scancode scancode;
+		int chip8_key;
+	};
+
+	static constexpr KeyMapping key_mappings[] = {
+		{SDL_SCANCODE_1, 0x1}, // row 1
+		{SDL_SCANCODE_2, 0x2},
+    {SDL_SCANCODE_3, 0x3},
+    {SDL_SCANCODE_4, 0xC},
+    {SDL_SCANCODE_Q, 0x4}, // row 2
+    {SDL_SCANCODE_W, 0x5},
+    {SDL_SCANCODE_E, 0x6},
+    {SDL_SCANCODE_R, 0xD},
+    {SDL_SCANCODE_A, 0x7}, // row 3
+    {SDL_SCANCODE_S, 0x8},
+    {SDL_SCANCODE_D, 0x9},
+    {SDL_SCANCODE_F, 0xE},
+    {SDL_SCANCODE_Z, 0xA}, // row 4
+    {SDL_SCANCODE_X, 0x0},
+    {SDL_SCANCODE_C, 0xB},
+    {SDL_SCANCODE_V, 0xF}
+	};
+
+	for (const auto& mapping : key_mappings){
+		if (mapping.scancode == scancode){
+			return mapping.chip8_key;
+		}
+	}
+
+	return -1;
+}
