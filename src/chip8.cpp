@@ -1,14 +1,14 @@
 #include "chip8.h"
 
+#include <iostream>
 #include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string>
 
 Chip8::Chip8() : rng(std::random_device{}()), dist(0, 255) {}
-
 void Chip8::load_font_set() {
-  const uint8_t font_set[80] = {
+  const uint8_t font_set[FONT_SIZE] = {
       0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
       0x20, 0x60, 0x20, 0x20, 0x70, // 1
       0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -27,12 +27,12 @@ void Chip8::load_font_set() {
       0xF0, 0x80, 0xF0, 0x80, 0x80  // F
   };
 
-  for (int i = 0; i < 80; ++i) {
+  for (int i = 0; i < FONT_SIZE; ++i) {
     memory[i] = font_set[i]; // store in interpreter area (0x000 - 0x1FF)
   }
-};
+}
 
-void Chip8::load_rom(const std::string &path) {
+void Chip8::load_rom(const std::string& path) {
   std::ifstream rom(
       path,
       std::ios::binary |
@@ -42,53 +42,48 @@ void Chip8::load_rom(const std::string &path) {
   }
 
   auto size = rom.tellg();
-  if (size < 0 || size > (4096 - 0x200)) {
+  if (size < 0 || size > MAX_ROM_SIZE) {
     throw std::runtime_error("ROM file too large or invalid " + path);
   }
 
   rom.seekg(0,
             std::ios::beg); // move get pointer to beginning of file for reading
-  rom.read(reinterpret_cast<char *>(&memory[0x200]),
+  rom.read(reinterpret_cast<char *>(&memory[PROGRAM_START]),
            size); // expects char buffer so cast uint8_t pointer to char pointer
                   // for reading starting at 0x200 in memory
   if (!rom) {
     throw std::runtime_error("Failed to read ROM file: " + path);
   }
-};
+}
 
 void Chip8::emulate_cycle() {
-  // fetch opcode
+  fetch_opcode();
+  decode_and_execute();
+}
+
+void Chip8::fetch_opcode() {
   opcode = (memory[program_counter] << 8) | memory[program_counter + 1];
-
   program_counter += 2;
+}
 
-  // decode opcode
+void Chip8::decode_and_execute() {
   const auto first_nibble = (opcode >> 12) & 0xF;
   const auto x = (opcode >> 8) & 0xF;
   const auto y = (opcode >> 4) & 0xF;
   const auto n = opcode & 0xF;
   const auto kk = opcode & 0xFF;
   const auto nnn = opcode & 0xFFF;
-
-  // decode and execute based on first nibble
   switch (first_nibble) {
   case 0x0:
-    if (opcode == 0x00E0) {
-      // clear screen
-    } else if (opcode == 0x00EE) { // return from a subroutine
-      program_counter = stack[stack_pointer];
-      --stack_pointer;
-    }
+    execute_0x0(opcode);
     break;
 
   case 0x1: // jump to location nnn
     program_counter = nnn;
     break;
 
-  case 0x2: // call subroutine at nnn
-    ++stack_pointer;
-    stack[stack_pointer] = program_counter;
-    program_counter = nnn;
+  case 0x2:
+    execute_0x2(nnn);
     break;
 
   case 0x3: // skip next instruction if Vx = kk
@@ -114,7 +109,7 @@ void Chip8::emulate_cycle() {
     break;
 
   case 0x7:
-    registers[x] = registers[x] + kk;
+    registers[x] = (registers[x] + kk) & 0xFF;
     break;
 
   case 0x8:
@@ -140,32 +135,78 @@ void Chip8::emulate_cycle() {
     registers[x] = random & kk;
     break;
   }
-
+ 
   case 0xD:
-    // Display n-byte sprite starting at memory location I at (Vx, Vy), set VF =
-    // collision.
-    // draw_flag = true;
-    //   break;
-
+    execute_0xD(x, y, n);
+    break;
   case 0xE:
-    switch (kk) {
-    case 0x9E:
-      if (key_states[registers[x]]) {
-        program_counter += 2;
-      }
-      break;
-
-    case 0xA1:
-      if (!key_states[registers[x]]) {
-        program_counter += 2;
-      }
-      break;
-    }
-
+    execute_0xE(x, kk);
     break;
 
   case 0xF:
     execute_0xF(x, kk);
+    break;
+  }
+}
+
+void Chip8::execute_0x0(uint16_t opcode) {
+  if (opcode == 0x00E0) {
+    gfx.fill(0);
+    draw_flag = true;
+  } else if (opcode == 0x00EE) {
+    if (stack_pointer == 0) {
+      throw std::runtime_error("Stack underflow on return");
+    }
+    program_counter = stack[stack_pointer];
+    --stack_pointer;
+  }
+}
+
+void Chip8::execute_0x2(uint16_t nnn) {
+  if (stack_pointer >= 15) {
+    throw std::runtime_error("Stack overflow on call");
+  }
+  ++stack_pointer;
+  stack[stack_pointer] = program_counter;
+  program_counter = nnn;
+}
+
+void Chip8::execute_0xD(uint8_t x, uint8_t y, uint8_t n) {
+  const auto x_pos = registers[x] % width;
+  const auto y_pos = registers[y] % height;
+  const auto height_n = n; // the low nibble (how many rows tall the sprite is)
+
+  registers[0xF] = 0; // assume no collision
+
+  for (uint8_t row = 0; row < height_n; ++row) {
+    uint8_t sprite = memory[index_register + row]; // store sprite in memory starting at index_register
+
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      if (sprite & (0x80 >> bit)) { // check if pixel is set in sprite
+        const auto px = (x_pos + bit) % width; // updated x/y positions for sprite bit, where width and height considers screen wrap
+        const auto py = (y_pos + row) % height; 
+        const auto pixel_index = py * width + px;
+
+        if (gfx[pixel_index] == 1) {
+          registers[0xF] = 1; //collision found
+        }
+        gfx[pixel_index] ^= 1; //xor to display
+      }
+    }
+  }
+}
+
+void Chip8::execute_0xE(uint8_t x, uint8_t kk) {
+  switch (kk) {
+  case 0x9E:
+    if (key_states[registers[x]]) {
+      program_counter += 2;
+    }
+    break;
+  case 0xA1:
+    if (!key_states[registers[x]]) {
+      program_counter += 2;
+    }
     break;
   }
 }
@@ -237,7 +278,7 @@ void Chip8::execute_0xF(uint8_t x, uint8_t kk) {
     sound_timer = registers[x];
     break;
   case 0x1E:
-    index_register += registers[x];
+    index_register = (index_register + registers[x]) & 0xFFF;
     break;
   case 0x29:
     index_register = registers[x] * 5;
@@ -261,6 +302,21 @@ void Chip8::execute_0xF(uint8_t x, uint8_t kk) {
     break;
   default:
     throw std::runtime_error("Unknown 0xF opcode: 0x" + std::to_string(opcode));
+  }
+}
+
+void Chip8::update_timers() {
+  if (delay_timer > 0) {
+    --delay_timer;
+  }
+
+  if (sound_timer > 0) {
+    --sound_timer;
+
+    if (sound_timer == 0) {
+      // TODO: sdl audio
+      std::cout << "BEEP!\n";
+    }
   }
 }
 
