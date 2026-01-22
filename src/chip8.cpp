@@ -1,6 +1,8 @@
 #include "chip8.h"
 
 #include <SDL3/SDL_oldnames.h>
+#include <SDL3/SDL_pixels.h>
+
 #include <iostream>
 #include <fstream>
 #include <random>
@@ -195,9 +197,14 @@ void Chip8::execute_0xD(uint8_t x, uint8_t y, uint8_t n) {
           registers[0xF] = 1; // collision found
         }
         gfx[pixel_index] ^= 1; // xor to display
+        draw_flag = true;
       }
     }
   }
+}
+
+void Chip8::set_frame_complete(bool complete) {
+  frame_complete = complete;
 }
 
 void Chip8::execute_0xE(uint8_t x, uint8_t kk) {
@@ -334,6 +341,36 @@ void Chip8::set_key_up(const int key){
 	if (key >= 0 && key < 16){
 		key_states[static_cast<std::size_t>(key)] = false;
 	}
+}
+
+void Chip8::init_double_buffer(SDL_Renderer* renderer) {
+  front_buffer = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, WIDTH, HEIGHT);
+  if (!front_buffer) {
+    throw std::runtime_error("Failed to create front texture");
+  }
+
+  back_buffer = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, WIDTH, HEIGHT);
+  if (!back_buffer) {
+    SDL_DestroyTexture(front_buffer);
+    throw std::runtime_error("Failed to create back texture");
+  }
+
+  uint32_t* pixels;
+  int pitch;
+  SDL_LockTexture(back_buffer, NULL, reinterpret_cast<void**>(&pixels), &pitch);
+  std::fill(pixels, pixels + WIDTH * HEIGHT, 0xFF000000);
+  SDL_UnlockTexture(back_buffer);
+}
+
+void Chip8::destroy_double_buffer() {
+  if (back_buffer) {
+    SDL_DestroyTexture(back_buffer);
+    back_buffer = nullptr;
+  }
+  if (front_buffer) {
+    SDL_DestroyTexture(front_buffer);
+    front_buffer = nullptr;
+  }
 }
 
 int Chip8::get_key(SDL_Scancode scancode){

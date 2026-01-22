@@ -1,11 +1,12 @@
 #pragma once
 #include <SDL3/SDL_scancode.h>
+#include <SDL3/SDL.h>
+
 #include <array>
 #include <cstdint>
 #include <string>
 #include <random>
 
-#include <SDL3/SDL.h>
 
 class Chip8 {
  public:
@@ -20,6 +21,7 @@ class Chip8 {
   void load_rom(const std::string& path);
   void emulate_cycle();
   void load_font_set();
+  void update_timers();
 
   //input handling
   void set_key_down(const int key);
@@ -29,6 +31,15 @@ class Chip8 {
   //display
   std::array<uint8_t, WIDTH * HEIGHT> gfx{};
   bool draw_flag{false};
+
+  //double buffering
+  SDL_Texture* front_buffer{};
+  SDL_Texture* back_buffer{};
+  bool frame_complete{false};
+
+  void init_double_buffer(SDL_Renderer* renderer);
+  void set_frame_complete(bool complete);
+  void destroy_double_buffer();
 
  private:
     std::array<uint8_t, MEMORY_SIZE> memory{};
@@ -57,6 +68,5 @@ class Chip8 {
     std::mt19937 rng;
     std::uniform_int_distribution<uint8_t> dist;
 
-    void update_timers();
 };
 

@@ -30,4 +30,4 @@ target_compile_options(chip8-emulator PRIVATE
     -Wsign-conversion
     -Werror
     -g
-)
+  )
