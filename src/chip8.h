@@ -1,6 +1,7 @@
 #pragma once
 #include <SDL3/SDL_scancode.h>
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_audio.h>
 
 #include <array>
 #include <cstdint>
@@ -18,10 +19,16 @@ class Chip8 {
   static constexpr int HEIGHT = 32;
 
   Chip8();
+  ~Chip8();
+
+  // Disable copy operations due to pointer members
+  Chip8(const Chip8&) = delete;
+  Chip8& operator=(const Chip8&) = delete;
   void load_rom(const std::string& path);
   void emulate_cycle();
   void load_font_set();
   void update_timers();
+  void play_beep();
 
   //input handling
   void set_key_down(const int key);
@@ -68,5 +75,7 @@ class Chip8 {
     std::mt19937 rng;
     std::uniform_int_distribution<uint8_t> dist;
 
+    // audio
+    SDL_AudioStream* audio_stream;
 };
 

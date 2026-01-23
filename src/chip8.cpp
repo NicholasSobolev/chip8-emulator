@@ -2,16 +2,39 @@
 
 #include <SDL3/SDL_oldnames.h>
 #include <SDL3/SDL_pixels.h>
+#include <SDL3/SDL_audio.h>
 
 #include <iostream>
 #include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
-Chip8::Chip8() : rng(std::random_device{}()), dist(0, 255) {
+Chip8::Chip8() : rng(std::random_device{}()), dist(0, 255), audio_stream(nullptr)  {
   load_font_set();
+
+  // init audio
+  SDL_AudioSpec spec;
+  SDL_zero(spec);
+  spec.freq = 44100;
+  spec.format = SDL_AUDIO_S16;
+  spec.channels = 1;
+
+  audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+  if (audio_stream == NULL) {
+    std::cerr << "Failed to open audio stream: " << SDL_GetError() << std::endl;
+  } else {
+    SDL_ResumeAudioStreamDevice(audio_stream);
+  }
 }
+
+Chip8::~Chip8() {
+  if (audio_stream) {
+    SDL_DestroyAudioStream(audio_stream);
+  }
+}
+
 void Chip8::load_font_set() {
   const uint8_t font_set[FONT_SIZE] = {
       0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -316,18 +339,32 @@ void Chip8::execute_0xF(uint8_t x, uint8_t kk) {
   }
 }
 
+void Chip8::play_beep() {
+  if (!audio_stream) return;
+
+  const int sample_rate = 44100;
+  const int beep_frequency = 800;
+  const size_t num_samples = sample_rate / 60;  // ~735 samples per frame at 60Hz
+
+  std::vector<int16_t> beep_samples(num_samples);
+
+  for (size_t i = 0; i < num_samples; ++i) {
+    // make square wave
+		beep_samples[i] = ( (i % (sample_rate / beep_frequency)) < (sample_rate / (beep_frequency * 2)) )
+                  ? 8000 : -8000;
+  }
+
+  SDL_PutAudioStreamData(audio_stream, beep_samples.data(), static_cast<int>(beep_samples.size() * sizeof(int16_t)));
+}
+
 void Chip8::update_timers() {
   if (delay_timer > 0) {
     --delay_timer;
   }
 
   if (sound_timer > 0) {
+    play_beep();
     --sound_timer;
-
-    if (sound_timer == 0) {
-      // TODO: sdl audio
-      std::cout << "BEEP!\n";
-    }
   }
 }
 
@@ -365,12 +402,11 @@ void Chip8::init_double_buffer(SDL_Renderer* renderer) {
 void Chip8::destroy_double_buffer() {
   if (back_buffer) {
     SDL_DestroyTexture(back_buffer);
-    back_buffer = nullptr;
   }
   if (front_buffer) {
     SDL_DestroyTexture(front_buffer);
-    front_buffer = nullptr;
   }
+	front_buffer = back_buffer = nullptr;
 }
 
 int Chip8::get_key(SDL_Scancode scancode){
